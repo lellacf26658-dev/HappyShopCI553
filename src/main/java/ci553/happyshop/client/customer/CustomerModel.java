@@ -1,6 +1,7 @@
 package ci553.happyshop.client.customer;
 
 import ci553.happyshop.catalogue.Order;
+import ci553.happyshop.catalogue.OrganisedTrolley;
 import ci553.happyshop.catalogue.Product;
 import ci553.happyshop.catalogue.Trolley;
 import ci553.happyshop.storageAccess.DatabaseRW;
@@ -22,7 +23,8 @@ public class CustomerModel {
                                   //Benefits: Flexibility: Easily change the database implementation.
 
     private Product searchResult =null; // product found from search
-    private Trolley trolley =  new Trolley(); // holds the products currently in the customer's trolley
+    private Trolley trolley =  new OrganisedTrolley(); // holds the products currently in the customer's trolley
+                                                      // (merged by product ID and sorted, see OrganisedTrolley)
 
     // Data passed to CustomerView for UI updates (including search, trolley and receipt page)
     private String searchResultImageName = "imageHolder.jpg";
@@ -76,8 +78,8 @@ public class CustomerModel {
     void addToTrolley(){
         if(searchResult != null){
             // Add the selected product to the trolley.
-            // Currently this simply appends the product to the end of the list.
-            // TODO: Improve the organisation of the trolley (see class Trolley).
+            // The OrganisedTrolley merges it with any line that has the same product ID
+            // and keeps the trolley sorted by product ID.
             trolley.addProduct(searchResult);
             // Build a formatted string so the trolley contents can be displayed in the UI
             trolleyContentsText = ProductListFormatter.buildString(trolley.getProducts());

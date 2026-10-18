@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 // This class includes TODO comments in addToTrolley() and checkout()
@@ -22,7 +23,8 @@ public class CustomerModel {
     private DatabaseRW databaseRW; //Interface type, not specific implementation
                                   //Benefits: Flexibility: Easily change the database implementation.
 
-    private Product searchResult =null; // product found from search
+    private ArrayList<Product> searchResults = new ArrayList<>(); // in-stock products found by the last search
+    private Product selectedProduct = null; // the search result the customer has chosen to add to the trolley
     private Trolley trolley =  new OrganisedTrolley(); // holds the products currently in the customer's trolley
                                                       // (merged by product ID and sorted, see OrganisedTrolley)
 
@@ -47,46 +49,88 @@ public class CustomerModel {
         this.databaseRW = databaseRW;
     }
 
-    //SELECT productID, description, image, unitPrice,inStock quantity
-    void search(){
-        String productId = cusView.tfId.getText().trim();
-        if(!productId.isEmpty()){
-            searchResult = databaseRW.searchProductById(productId); //search database
-            if(searchResult != null && searchResult.getStockQuantity()>0){
-                double unitPrice = searchResult.getUnitPrice();
-                String description = searchResult.getProductDescription();
-                int stock = searchResult.getStockQuantity();
+    /**
+     * Searches for products by product ID or keyword, using one combined query.
+     *
+     * The query is passed in by the controller, so the model does not read UI controls
+     * directly (keeping MVC layers separate, and making search testable without JavaFX).
+     *
+     * DatabaseRW.searchProducts() first tries an exact ID match, then a keyword search
+     * on the description. Products that are out of stock are left out of the results.
+     * If exactly one product is found it is selected automatically; otherwise the
+     * customer chooses one from the results list.
+     *
+     * @param query the product ID or keyword typed by the customer
+     */
+    void search(String query){
+        searchResults.clear();
+        selectedProduct = null;
 
-                String baseInfo = String.format("Product_Id: %s\n%s,\nPrice: £%.2f", productId, description, unitPrice);
-                String quantityInfo = stock < 100 ? String.format("\n%d units left.", stock) : "";
-                searchResultProductText = baseInfo + quantityInfo;
-                System.out.println(searchResultProductText);
-            }
-            else{
-                searchResult =null;
-                searchResultProductText = "No Product was found with ID " + productId;
-                System.out.println("No Product was found with ID " + productId);
-            }
-        }else{
-            searchResult =null;
-            searchResultProductText = "Please type ProductID";
-            System.out.println("Please type ProductID.");
+        String trimmedQuery = query == null ? "" : query.trim();
+        if(trimmedQuery.isEmpty()){
+            searchResultProductText = "Please type a product ID or keyword";
+            System.out.println("Please type a product ID or keyword.");
+            updateView();
+            return;
         }
+
+        for(Product p : databaseRW.searchProducts(trimmedQuery)){
+            if(p.getStockQuantity() > 0){
+                searchResults.add(p);
+            }
+        }
+
+        if(searchResults.isEmpty()){
+            searchResultProductText = "No products found for \"" + trimmedQuery + "\"";
+        }
+        else if(searchResults.size() == 1){
+            selectedProduct = searchResults.get(0);
+            searchResultProductText = describe(selectedProduct);
+        }
+        else{
+            searchResultProductText = searchResults.size() + " products found.\nSelect one to add to your trolley.";
+        }
+        System.out.println(searchResultProductText);
         updateView();
     }
 
+    /**
+     * Selects one of the current search results, ready to be added to the trolley.
+     * Products that are not in the current results are ignored.
+     *
+     * @param product the product the customer picked from the results list
+     */
+    void selectProduct(Product product){
+        if(product != null && searchResults.contains(product)){
+            selectedProduct = product;
+            searchResultProductText = describe(product);
+            updateView();
+        }
+    }
+
+    // Builds the text shown for a selected product, e.g. ID, description, price and low-stock warning.
+    private String describe(Product product){
+        String baseInfo = String.format("Product_Id: %s\n%s,\nPrice: £%.2f",
+                product.getProductId(), product.getProductDescription(), product.getUnitPrice());
+        int stock = product.getStockQuantity();
+        String quantityInfo = stock < 100 ? String.format("\n%d units left.", stock) : "";
+        return baseInfo + quantityInfo;
+    }
+
     void addToTrolley(){
-        if(searchResult != null){
+        if(selectedProduct != null){
             // Add the selected product to the trolley.
             // The OrganisedTrolley merges it with any line that has the same product ID
             // and keeps the trolley sorted by product ID.
-            trolley.addProduct(searchResult);
+            trolley.addProduct(selectedProduct);
             // Build a formatted string so the trolley contents can be displayed in the UI
             trolleyContentsText = ProductListFormatter.buildString(trolley.getProducts());
         }
         else{
-            searchResultProductText = "Please search and get an available product before adding to trolley";
-            System.out.println("must search and get an available product before add to trolley");
+            searchResultProductText = searchResults.isEmpty()
+                    ? "Please search for an available product before adding to trolley"
+                    : "Please select a product from the results before adding to trolley";
+            System.out.println("must search and select an available product before add to trolley");
         }
         receiptContentsText =""; // Clear receipt to switch back to trolleyPage (receipt shows only when not empty)
         updateView();
@@ -108,7 +152,7 @@ public class CustomerModel {
                 Order theOrder = orderHub.newOrder(trolley.getProducts());
                 trolley.clear();
                 trolleyContentsText ="";
-                searchResult = null;
+                clearSearch(); // stock levels have changed, so old results may be out of date
                 searchResultProductText ="Thank you for shopping with us.";
                 receiptContentsText = String.format(
                         "Order_ID: %s\nOrdered_Date_Time: %s\n%s",
@@ -126,7 +170,7 @@ public class CustomerModel {
                             .append(p.getStockQuantity()).append(" available, ")
                             .append(p.getOrderedQuantity()).append(" requested)\n");
                 }
-                searchResult =null;
+                clearSearch();
 
                 //TODO
                 // Add the following logic here:
@@ -174,9 +218,15 @@ public class CustomerModel {
         receiptContentsText ="";
     }
 
+    // Clears the search results and the selected product.
+    private void clearSearch(){
+        searchResults.clear();
+        selectedProduct = null;
+    }
+
     void updateView() {
-        if(searchResult != null){
-            searchResultImageName = searchResult.getProductImageName();
+        if(selectedProduct != null){
+            searchResultImageName = selectedProduct.getProductImageName();
             String relativeImageUrl = StorageLocation.imageFolder + searchResultImageName; //relative file path, eg images/0001.jpg
             // Get the full absolute path to the image
             Path imageFullPath = Paths.get(relativeImageUrl).toAbsolutePath();
@@ -186,7 +236,8 @@ public class CustomerModel {
         else{
             searchResultImageName = "imageHolder.jpg";
         }
-        cusView.update(searchResultImageName, searchResultProductText, trolleyContentsText, receiptContentsText);
+        cusView.update(searchResultImageName, searchResultProductText,
+                List.copyOf(searchResults), selectedProduct, trolleyContentsText, receiptContentsText);
     }
      // extra notes:
      //Path.toUri(): Converts a Path object (a file or a directory path) to a URI object.
@@ -195,5 +246,20 @@ public class CustomerModel {
     //for test
     public Trolley getTrolley() {
         return trolley;
+    }
+
+    //for test
+    List<Product> getSearchResults() {
+        return List.copyOf(searchResults);
+    }
+
+    //for test
+    Product getSelectedProduct() {
+        return selectedProduct;
+    }
+
+    //for test
+    String getSearchResultProductText() {
+        return searchResultProductText;
     }
 }

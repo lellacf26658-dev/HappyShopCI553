@@ -1,8 +1,12 @@
 package ci553.happyshop.client.customer;
 
+import ci553.happyshop.catalogue.Product;
+import ci553.happyshop.utility.StorageLocation;
 import ci553.happyshop.utility.UIStyle;
 import ci553.happyshop.utility.WinPosManager;
 import ci553.happyshop.utility.WindowBounds;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
 import javafx.event.ActionEvent;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -14,6 +18,9 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Line;
 import javafx.stage.Stage;
+
+import java.nio.file.Paths;
+import java.util.List;
 
 /**
  * The CustomerView is separated into two sections by a line :
@@ -34,12 +41,13 @@ public class CustomerView  {
     private VBox vbTrolleyPage;  //vbTrolleyPage and vbReceiptPage will swap with each other when need
     private VBox vbReceiptPage;
 
-    TextField tfId; //for user input on the search page. Made accessible so it can be accessed or modified by CustomerModel
-    TextField tfKeyword; // part of the product description
-                         // for user input on the search page.
-                         // Optional extension: made accessible so it can be accessed by CustomerModel
+    private TextField tfSearch; // one combined search box: accepts a product ID or a keyword
 
-    //four UI controls needs updating when program going on
+    //UI controls that need updating when the program is running
+    private ObservableList<Product> searchResultsCopy; // copy of the model's search results, observed by the ListView
+    private ListView<Product> lvSearchResults; // shows every product found by the last search
+    private boolean updatingFromModel = false; // true while update() refreshes the list, so selection
+                                               // changes made by the program are not sent back to the model
     private ImageView ivProduct; //image area in searchPage
     private Label lbProductText;//product text info in searchPage
     private TextArea taTrolley; //in trolley Page
@@ -78,29 +86,56 @@ public class CustomerView  {
         Label laPageTitle = new Label("🔍 Browse & Search Products 🔍");
         laPageTitle.setStyle(UIStyle.labelTitleStyle);
 
-        Label laId = new Label("ID:" + " ".repeat(11));
-        laId.setStyle(UIStyle.labelStyle);
-        tfId = new TextField();
-        tfId.setPromptText("eg. 0001");
-        tfId.setStyle(UIStyle.customerTextFieldStyle);
-
-        HBox hbId = new HBox(10, laId, tfId);
-
-        Label laKeyword = new Label("Keyword:");
-        laKeyword.setStyle(UIStyle.labelStyle);
-        tfKeyword = new TextField();
-        tfKeyword.setPromptText("Part of pro_desc (opt task)");
-        tfKeyword.setStyle(UIStyle.customerTextFieldStyle);
-        HBox hbName = new HBox(10, laKeyword, tfKeyword);
-
-        Label laPlaceHolder = new Label(  " ".repeat(15)); //create left-side spacing so that this HBox aligns with others in the layout.
+        tfSearch = new TextField();
+        tfSearch.setPromptText("ID or keyword, eg. 0001 or TV");
+        tfSearch.setStyle(UIStyle.customerTextFieldStyle);
+        tfSearch.setOnAction(e -> cusController.doSearch(tfSearch.getText())); // pressing Enter also searches
         Button btnSearch = new Button("Search");
         btnSearch.setStyle(UIStyle.buttonStyle);
         btnSearch.setOnAction(this::buttonClicked);
+        HBox hbSearch = new HBox(10, tfSearch, btnSearch);
+        hbSearch.setAlignment(Pos.CENTER);
+
+        // Search results list, using the same approach as the Warehouse client's search page
+        searchResultsCopy = FXCollections.observableArrayList();
+        lvSearchResults = new ListView<>(searchResultsCopy);
+        lvSearchResults.setPrefHeight(130);
+        lvSearchResults.setFixedCellSize(45);
+        lvSearchResults.setStyle(UIStyle.listViewStyle);
+        lvSearchResults.setPlaceholder(new Label("Search results appear here"));
+        lvSearchResults.setCellFactory(param -> new ListCell<Product>() {
+            @Override
+            protected void updateItem(Product product, boolean empty) {
+                super.updateItem(product, empty);
+                if (empty || product == null) {
+                    setGraphic(null);
+                } else {
+                    String imageUri = Paths.get(StorageLocation.imageFolder + product.getProductImageName())
+                            .toAbsolutePath().toUri().toString();
+                    ImageView ivPro;
+                    try {
+                        ivPro = new ImageView(new Image(imageUri, 40, 35, true, true));
+                    } catch (Exception e) {
+                        ivPro = new ImageView(new Image("imageHolder.jpg", 40, 35, true, true));
+                    }
+                    Label laPro = new Label(String.format("%s  %s\n£%.2f",
+                            product.getProductId(), product.getProductDescription(), product.getUnitPrice()));
+                    setGraphic(new HBox(8, ivPro, laPro));
+                }
+            }
+        });
+        // When the customer selects a result, tell the controller (but not when update() changes the list)
+        lvSearchResults.getSelectionModel().selectedItemProperty().addListener((obs, oldPro, newPro) -> {
+            if (!updatingFromModel && newPro != null) {
+                cusController.selectProduct(newPro);
+            }
+        });
+
         Button btnAddToTrolley = new Button("Add to Trolley");
         btnAddToTrolley.setStyle(UIStyle.buttonStyle);
         btnAddToTrolley.setOnAction(this::buttonClicked);
-        HBox hbBtns = new HBox(10, laPlaceHolder,btnSearch, btnAddToTrolley);
+        HBox hbBtns = new HBox(10, btnAddToTrolley);
+        hbBtns.setAlignment(Pos.CENTER);
 
         ivProduct = new ImageView("imageHolder.jpg");
         ivProduct.setFitHeight(60);
@@ -115,7 +150,7 @@ public class CustomerView  {
         HBox hbSearchResult = new HBox(5, ivProduct, lbProductText);
         hbSearchResult.setAlignment(Pos.CENTER_LEFT);
 
-        VBox vbSearchPage = new VBox(15, laPageTitle, hbId, hbName, hbBtns, hbSearchResult);
+        VBox vbSearchPage = new VBox(10, laPageTitle, hbSearch, lvSearchResults, hbSearchResult, hbBtns);
         vbSearchPage.setPrefWidth(COLUMN_WIDTH);
         vbSearchPage.setAlignment(Pos.TOP_CENTER);
         vbSearchPage.setStyle("-fx-padding: 15px;");
@@ -180,13 +215,40 @@ public class CustomerView  {
         if(action.equals("OK & Close")){
             showTrolleyOrReceiptPage(vbTrolleyPage);
         }
+        if(action.equals("Search")){
+            cusController.doSearch(tfSearch.getText()); // the view passes the query; the model never reads the TextField
+            return;
+        }
         cusController.doAction(action);
     }
 
 
-    public void update(String productImageName, String productTextInfo, String trolley, String receipt) {
+    /**
+     * Refreshes the customer window with the model's current state.
+     *
+     * @param productImageName image URI for the selected product, or the placeholder image
+     * @param productTextInfo  details of the selected product, or a status message
+     * @param searchResults    products found by the last search
+     * @param selectedProduct  the selected search result, or null if none is selected
+     * @param trolley          formatted trolley contents
+     * @param receipt          formatted receipt; the receipt page is shown when this is not empty
+     */
+    public void update(String productImageName, String productTextInfo, List<Product> searchResults,
+                       Product selectedProduct, String trolley, String receipt) {
         ivProduct.setImage(new Image(productImageName));
         lbProductText.setText(productTextInfo);
+
+        updatingFromModel = true;
+        if (!searchResultsCopy.equals(searchResults)) {
+            searchResultsCopy.setAll(searchResults); // only replace the list when the results have changed
+        }
+        if (selectedProduct == null) {
+            lvSearchResults.getSelectionModel().clearSelection();
+        } else {
+            lvSearchResults.getSelectionModel().select(selectedProduct);
+        }
+        updatingFromModel = false;
+
         taTrolley.setText(trolley);
         if (!receipt.equals("")) {
             showTrolleyOrReceiptPage(vbReceiptPage);
